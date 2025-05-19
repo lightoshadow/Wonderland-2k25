@@ -2,22 +2,36 @@
 # -*- coding: utf-8 -*-
 
 """
-Wonderland Character Classifier - Webcam Inference
+Optimized Wonderland Character Classifier - Webcam Inference
 This script loads a trained EfficientNet model and performs real-time
-inference using a webcam feed with performance optimizations.
+inference using a webcam feed with various optimizations.
 """
 
 import cv2
 import torch
 import torchvision
 import numpy as np
-from PIL import Image
+import threading
+import queue
 import time
-from collections import deque
+from PIL import Image
 
 # Set device for inference
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
+
+# Enable mixed precision if using CUDA
+use_amp = device == "cuda"
+if use_amp:
+    print("Enabling automatic mixed precision")
+
+# Configuration
+MODEL_PATH = "WonderlandEfficentNet.pth"
+LABELS_FILE = "labels.txt"
+FRAME_SKIP = 1  # Process every nth frame
+INFERENCE_SIZE = (224, 224)  # Standard size for EfficientNet
+DISPLAY_FPS = True
+MAX_QUEUE_SIZE = 3
 
 # Load labels
 def load_labels(labels_file):
@@ -25,7 +39,7 @@ def load_labels(labels_file):
         labels = [line.strip() for line in f.readlines()]
     return labels
 
-# Load the model
+# Load and optimize the model
 def load_model(model_path, num_classes):
     # Create the EfficientNet model with the default weights
     weights = torchvision.models.EfficientNet_B0_Weights.DEFAULT
@@ -42,174 +56,124 @@ def load_model(model_path, num_classes):
     model = model.to(device)
     model.eval()
     
-    # Optimize model for inference
-    if device == "cuda":
-        model = model.half()  # Use half precision (FP16) for CUDA
+    # Optimize with TorchScript (JIT compilation)
+    try:
+        example_input = torch.rand(1, 3, 224, 224).to(device)
+        model = torch.jit.trace(model, example_input)
+        print("Model optimized with TorchScript")
+    except Exception as e:
+        print(f"JIT compilation failed: {e}")
+    
+    # Attempt model quantization for CPU
+    if device == "cpu":
+        try:
+            model_quantized = torch.quantization.quantize_dynamic(
+                model, {torch.nn.Linear}, dtype=torch.qint8
+            )
+            model = model_quantized
+            print("Model quantized for CPU inference")
+        except Exception as e:
+            print(f"Quantization failed: {e}")
     
     return model, weights
 
-class WebcamInference:
-    def __init__(self, model, transform, class_names, device, 
-                 input_size=(224, 224), skip_frames=1,
-                 confidence_threshold=0.5, moving_avg_size=10):
-        self.model = model
-        self.transform = transform
-        self.class_names = class_names
-        self.device = device
-        self.input_size = input_size
-        self.skip_frames = skip_frames
-        self.confidence_threshold = confidence_threshold
-        
-        # For performance tracking
-        self.fps_queue = deque(maxlen=moving_avg_size)
-        self.process_times = deque(maxlen=moving_avg_size)
-        
-        # For prediction smoothing
-        self.pred_history = deque(maxlen=5)
-        self.current_pred = None
-        self.current_conf = 0.0
-        
-        # Frame counter
-        self.frame_count = 0
+# Efficient preprocessing
+def preprocess_image(image, transform):
+    """Efficiently preprocess an image for inference"""
+    # Resize image directly with OpenCV (more efficient than PIL)
+    resized = cv2.resize(image, INFERENCE_SIZE)
+    # Convert BGR to RGB
+    rgb_image = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+    # Convert to tensor and normalize in one step
+    img_tensor = transform(Image.fromarray(rgb_image)).unsqueeze(0)
+    return img_tensor
+
+# Prediction function with mixed precision support
+def predict_image(model, img_tensor, class_names):
+    img_tensor = img_tensor.to(device)
     
-    def preprocess_frame(self, frame):
-        """Preprocess frame for inference with resize optimization"""
-        # Resize frame to input size (much faster than letting transforms do it)
-        resized = cv2.resize(frame, self.input_size)
-        # Convert to RGB (PIL format)
-        rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-        # Convert to PIL Image
-        pil_image = Image.fromarray(rgb_frame)
-        # Apply remaining transforms
-        return self.transform(pil_image).unsqueeze(0).to(self.device)
+    # Use mixed precision for CUDA
+    if use_amp:
+        with torch.cuda.amp.autocast():
+            with torch.no_grad():
+                outputs = model(img_tensor)
+    else:
+        with torch.no_grad():
+            outputs = model(img_tensor)
     
-    def predict(self, frame):
-        """Make prediction on a frame"""
-        self.frame_count += 1
-        
-        # Skip frames to improve performance
-        if (self.frame_count - 1) % self.skip_frames != 0:
-            return self.current_pred, self.current_conf, 0  # Return current prediction with no processing time
-        
-        start_time = time.time()
-        
-        # Preprocess frame efficiently
-        img_tensor = self.preprocess_frame(frame)
-        
-        # Make prediction
-        with torch.no_grad():  # Disable gradient calculation
-            if device == "cuda":
-                img_tensor = img_tensor.half()  # Use half precision if on CUDA
-            
-            outputs = self.model(img_tensor)
-            probabilities = torch.softmax(outputs, dim=1)
-            
-            predicted_idx = torch.argmax(probabilities, dim=1).item()
-            confidence = probabilities[0][predicted_idx].item()
-        
-        # Update prediction history for smoothing
-        predicted_class = self.class_names[predicted_idx]
-        self.pred_history.append((predicted_class, confidence))
-        
-        # Get most common prediction from history (simple smoothing)
-        if len(self.pred_history) >= 3:  # Only start smoothing after collecting some predictions
-            pred_counts = {}
-            for pred, conf in self.pred_history:
-                if pred not in pred_counts:
-                    pred_counts[pred] = {"count": 0, "total_conf": 0}
-                pred_counts[pred]["count"] += 1
-                pred_counts[pred]["total_conf"] += conf
-            
-            # Find most common prediction with highest average confidence
-            best_count = 0
-            best_pred = None
-            best_conf = 0
-            
-            for pred, data in pred_counts.items():
-                if data["count"] > best_count:
-                    best_count = data["count"]
-                    best_pred = pred
-                    best_conf = data["total_conf"] / data["count"]
-                elif data["count"] == best_count and data["total_conf"] / data["count"] > best_conf:
-                    best_pred = pred
-                    best_conf = data["total_conf"] / data["count"]
-            
-            if best_pred:
-                predicted_class = best_pred
-                confidence = best_conf
-        
-        # Update current prediction
-        self.current_pred = predicted_class
-        self.current_conf = confidence
-        
-        # Calculate processing time
-        process_time = time.time() - start_time
-        self.process_times.append(process_time)
-        
-        return predicted_class, confidence, process_time
+    # Get prediction
+    probabilities = torch.softmax(outputs, dim=1)
+    predicted_class = torch.argmax(probabilities, dim=1).item()
+    confidence = probabilities[0][predicted_class].item()
     
-    def update_fps(self, frame_time):
-        """Update FPS calculation"""
-        self.fps_queue.append(1.0 / frame_time if frame_time > 0 else 0)
-        return sum(self.fps_queue) / len(self.fps_queue) if self.fps_queue else 0
-    
-    def get_avg_process_time(self):
-        """Get average processing time in milliseconds"""
-        return sum(self.process_times) * 1000 / len(self.process_times) if self.process_times else 0
-    
-    def draw_stats(self, frame, fps, predicted_class, confidence):
-        """Draw stats on frame"""
-        h, w = frame.shape[:2]
+    return class_names[predicted_class], confidence
+
+# Frame capture worker
+def capture_frames(cap, frame_queue, stop_event):
+    frame_count = 0
+    while not stop_event.is_set():
+        ret, frame = cap.read()
+        if not ret:
+            print("Error: Failed to capture image")
+            stop_event.set()
+            break
+            
+        # Skip frames if needed
+        frame_count += 1
+        if frame_count % FRAME_SKIP != 0:
+            continue
+            
+        # If queue is full, remove oldest item
+        if frame_queue.qsize() >= MAX_QUEUE_SIZE:
+            try:
+                frame_queue.get_nowait()
+            except queue.Empty:
+                pass
+                
+        frame_queue.put((frame, time.time()))
         
-        # Draw prediction on frame if confidence is above threshold
-        if confidence >= self.confidence_threshold:
-            prediction_text = f"{predicted_class.replace('-', '')}: {confidence:.2f}"
-            cv2.putText(frame, prediction_text, (10, 30), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        
-        # Draw FPS in top right
-        fps_text = f"FPS: {fps:.1f}"
-        fps_text_size = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-        fps_x_position = w - fps_text_size[0] - 10  # 10 pixels from right edge
-        cv2.putText(frame, fps_text, (fps_x_position, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-        
-        # Draw processing time in ms
-        if self.process_times:
-            process_text = f"Process: {self.get_avg_process_time():.1f}ms"
-            cv2.putText(frame, process_text, (fps_x_position, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-        
-        return frame
+        # Small sleep to prevent CPU hogging
+        time.sleep(0.001)
+
+# Inference worker
+def process_frames(model, transform, class_names, frame_queue, result_queue, stop_event):
+    while not stop_event.is_set():
+        try:
+            frame, timestamp = frame_queue.get(timeout=1.0)
+            
+            # Preprocess
+            img_tensor = preprocess_image(frame, transform)
+            
+            # Predict
+            predicted_class, confidence = predict_image(model, img_tensor, class_names)
+            
+            # Add result to queue
+            result_queue.put((frame, predicted_class, confidence, timestamp))
+            
+        except queue.Empty:
+            continue
+        except Exception as e:
+            print(f"Error in inference: {e}")
+            continue
 
 def main():
-    # Configuration parameters
-    model_path = "WonderlandEfficentNet.pth"
-    labels_file = "labels.txt"
-    webcam_index = 0
-    frame_width = 640   # Reduced frame size for better performance
-    frame_height = 480
-    skip_frames = 2     # Process every N frames
-    confidence_threshold = 0.5  # Minimum confidence to show prediction
-    
     # Load class names
-    class_names = load_labels(labels_file)
+    class_names = load_labels(LABELS_FILE)
     print(f"Loaded {len(class_names)} classes: {class_names}")
     
     # Load model and get weights
-    model, weights = load_model(model_path, len(class_names))
+    model, weights = load_model(MODEL_PATH, len(class_names))
     
     # Get transforms from the weights
     transform = weights.transforms()
-    print("Using transforms from model weights")
     
     # Initialize webcam
     print("Initializing webcam...")
-    cap = cv2.VideoCapture(webcam_index)
+    cap = cv2.VideoCapture(0)
     
-    # Set lower resolution for better performance
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
+    # Try to set higher resolution if available
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     
     if not cap.isOpened():
         print("Error: Could not open webcam.")
@@ -217,41 +181,77 @@ def main():
     
     print("Webcam initialized. Press 'q' to quit.")
     
-    # Create inference handler
-    inference = WebcamInference(
-        model=model,
-        transform=transform,
-        class_names=class_names,
-        device=device,
-        skip_frames=skip_frames,
-        confidence_threshold=confidence_threshold
-    )
+    # Create queues for frame passing
+    frame_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
+    result_queue = queue.Queue()
     
-    prev_frame_time = time.time()
-    avg_fps = 0
+    # Create stop event for signaling threads to exit
+    stop_event = threading.Event()
     
+    # Start worker threads
+    capture_thread = threading.Thread(target=capture_frames, 
+                                     args=(cap, frame_queue, stop_event))
+    inference_thread = threading.Thread(target=process_frames,
+                                       args=(model, transform, class_names, 
+                                             frame_queue, result_queue, stop_event))
+    
+    capture_thread.daemon = True
+    inference_thread.daemon = True
+    
+    capture_thread.start()
+    inference_thread.start()
+    
+    # Variables for FPS calculation
+    frame_times = []
+    fps_update_interval = 0.5  # seconds
+    last_fps_update = time.time()
+    current_fps = 0
+    
+    # Display loop
+    last_result = None
     try:
         while True:
-            # Read frame from webcam
-            ret, frame = cap.read()
+            # Get the latest result if available
+            try:
+                frame, predicted_class, confidence, timestamp = result_queue.get_nowait()
+                last_result = (frame, predicted_class, confidence, timestamp)
+                
+                # Update FPS
+                current_time = time.time()
+                frame_times.append(current_time)
+                
+                # Remove old frame times
+                while frame_times and frame_times[0] < current_time - 1.0:
+                    frame_times.pop(0)
+                
+                # Update FPS counter periodically
+                if current_time - last_fps_update > fps_update_interval:
+                    current_fps = len(frame_times)
+                    last_fps_update = current_time
+                
+            except queue.Empty:
+                # If no new result, use the last one
+                if last_result is None:
+                    # If there's no result yet, wait a bit
+                    time.sleep(0.01)
+                    continue
+                frame, predicted_class, confidence, timestamp = last_result
             
-            if not ret:
-                print("Error: Failed to capture image")
-                break
+            # Create a copy of the frame for drawing
+            display_frame = frame.copy()
             
-            # Calculate real FPS (capture rate)
-            curr_frame_time = time.time()
-            frame_time = curr_frame_time - prev_frame_time
-            prev_frame_time = curr_frame_time
+            # Draw prediction on frame
+            prediction_text = f"{predicted_class.replace('-', '')}: {confidence:.2f}"
+            cv2.putText(display_frame, prediction_text, (10, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             
-            # Update average FPS
-            avg_fps = inference.update_fps(frame_time)
-            
-            # Make prediction
-            predicted_class, confidence, _ = inference.predict(frame)
-            
-            # Draw stats on frame
-            display_frame = inference.draw_stats(frame, avg_fps, predicted_class, confidence)
+            # Draw FPS in top right
+            if DISPLAY_FPS:
+                fps_text = f"FPS: {current_fps}"
+                fps_text_size = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                fps_x_position = display_frame.shape[1] - fps_text_size[0] - 10
+                cv2.putText(display_frame, fps_text, (fps_x_position, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
             
             # Display the frame
             cv2.imshow('Wonderland Character Classifier', display_frame)
@@ -259,15 +259,21 @@ def main():
             # Break the loop if 'q' is pressed
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
-    
+                
     except KeyboardInterrupt:
         print("Interrupted by user")
-    
     finally:
-        # Release resources
+        # Clean up
+        print("Cleaning up resources...")
+        stop_event.set()
+        
+        # Wait for threads to finish
+        capture_thread.join(timeout=1.0)
+        inference_thread.join(timeout=1.0)
+        
         cap.release()
         cv2.destroyAllWindows()
-        print("Application closed")
+        print("Application terminated.")
 
 if __name__ == "__main__":
     main()
