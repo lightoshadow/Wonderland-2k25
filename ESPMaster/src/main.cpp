@@ -2,8 +2,6 @@
 //https://github.com/hen1227/bluetooth-serial
 #include <ArduinoJson.h>
 #include <Arduino.h>
-#include <ESP32Servo.h>
-
 
 // Define RX and TX pins for Serial 2
 #define RXD2 16
@@ -20,17 +18,8 @@ HardwareSerial gpsSerial(2);
 HardwareSerial ESPSerial(1);
 
 BluetoothSerial SerialBT;
-Servo coda;
-bool statusCoda = false;   // Se false coda ferma, se true coda in movimento
-
-const int M1orario = 12;
-const int M2orario = 27;
-const int M1antiorario = 14;
-const int M2antiorario = 26;
 
 const String slave1 = "ESP32_Slave_2.1";
-const String slave2 = "ESP32_Slave_2.2";
-const String slave3 = "ESP32_Slave_2.3";
 
 struct msg_protocol
 {
@@ -91,6 +80,50 @@ String ricezioneRaspi(bool& checkInvio) {
   
   while (Serial.available() > 0) {
     char Data = Serial.read();
+    if (index < sizeof(Json) - 1) { // Ensure no buffer overflow
+      Json[index++] = Data;
+      //Serial.print(gpsData);
+    }
+  }
+  
+  // Controlla se l'ultimo carattere è "!" e lo rimuove
+  if (index > 0 && Json[index - 1] == '!') {
+    index--;  // Riduce la lunghezza effettiva del JSON ricevuto
+  }
+
+  Json[index] = '\0'; // Ensure it's a null-terminated string
+  
+  if (index > 0) {
+    StaticJsonDocument<255> msg_json; // Proper JSON buffer
+    DeserializationError error = deserializeJson(msg_json, Json);
+
+    if (error) {
+      //Serial.print("deserializeJson() failed: ");
+      //Serial.println(error.f_str());
+      memset(Json, 0, sizeof(Json));  
+      return "";
+    }
+
+    msg_protocol msg_recvd;
+    msg_recvd.tipo = msg_json["tipo"];
+    msg_recvd.ID = msg_json["ID"];
+    msg_recvd.checkInvio = msg_json["checkInvio"];
+    msg_recvd.istruzione = msg_json["istruzione"].as<String>();
+
+    memset(Json, 0, sizeof(Json)); // Clear the buffer before returning
+
+    checkInvio = msg_recvd.checkInvio;
+    return msg_recvd.istruzione;
+  }
+  
+  return ""; // Return empty string if no data
+}
+
+String ricezioneUARTesp(bool& checkInvio) {
+  int index = 0;
+  
+  while (ESPSerial.available() > 0) {
+    char Data = ESPSerial.read();
     if (index < sizeof(Json) - 1) { // Ensure no buffer overflow
       Json[index++] = Data;
       //Serial.print(gpsData);
@@ -196,12 +229,6 @@ void invioUARTesp(int tipo, int ID, String istruzione) {
   ESPSerial.write((const uint8_t*)Json, len);
 }
 
-void spegnitutto() {
-  digitalWrite(M1orario, LOW);
-  digitalWrite(M2orario, LOW);
-  digitalWrite(M1antiorario, LOW);
-  digitalWrite(M2antiorario, LOW);
-}
 
 void setup() {
   Serial.begin(115200);
@@ -209,14 +236,6 @@ void setup() {
   ESPSerial.begin(ESP_BAUD, SERIAL_8N1, RXD1, TXD2);
   //Serial.println("Serial 2 started at 115200 baud rate");
 
-  coda.attach(13);
-  coda.write(70);
-  pinMode(M1orario, OUTPUT);
-  pinMode(M2orario, OUTPUT);
-  pinMode(M1antiorario, OUTPUT);
-  pinMode(M2antiorario, OUTPUT);
-  pinMode(33, OUTPUT);
-  pinMode(23, OUTPUT);
   pinMode(BUILTIN_LED, OUTPUT);
   digitalWrite(BUILTIN_LED, LOW);
 
@@ -229,43 +248,10 @@ void setup() {
   // }
   // digitalWrite(BUILTIN_LED, HIGH);
   //Serial.println("Connesso");
-  spegnitutto();
-}
-
-void sano(bool sens) {
-  if (sens) {
-    digitalWrite(M1orario, HIGH);
-    digitalWrite(M2orario, HIGH);
-  } else {
-    digitalWrite(M1antiorario, HIGH);
-    digitalWrite(M2antiorario, HIGH);
-  }
-}
-
-void strabico(bool sens) {
-  if (sens) {
-    digitalWrite(M1orario, HIGH);
-    digitalWrite(M2antiorario, HIGH);
-  } else {
-    digitalWrite(M1antiorario, HIGH);
-    digitalWrite(M2orario, HIGH);
-  }
 }
 
 String assegnaNome(int id) {
-  if (id == 1)
-  {
-    return slave1;
-  } else if (id == 2)
-  {
-    return slave2;
-  } else if (id == 3)
-  {
-    return slave3;
-  } else
-  {
-    //Serial.println("ERRORE id sbagliato");
-  }  
+  return slave1;
 }
 
 void invioSicuroEsp(int id, String istruzione) {
@@ -363,8 +349,8 @@ void invioSicuro(int tipo, int ID, String istruzione){
     } else if (ID == 2 || ID == 3)
     {
       bool check;
-      invioRaspi(tipo, ID, istruzione);
-      if (ricezioneRaspi(check) == istruzione);
+      invioUARTesp(tipo, ID, istruzione);
+      if (ricezioneUARTesp(check) == istruzione);
       {
         if (check)
         {
@@ -375,8 +361,6 @@ void invioSicuro(int tipo, int ID, String istruzione){
         
       }
     }
-    
-    
   }
   else if (tipo == 4)
   {
@@ -424,64 +408,49 @@ void invioSicuro(int tipo, int ID, String istruzione){
   }
 }
 
-void scenaGatto(int n)
-{
-  digitalWrite(23, HIGH);
-  delay(50);
-  digitalWrite(23, LOW);
-  for (int i = 0; i < n; i++)
-  {
-    coda.write(70);
-    sano(true);
-    delay(2000);
-    spegnitutto();
-    coda.write(40);
-    coda.write(10);
-    sano(false);
-    delay(2000);
-    spegnitutto();
-    coda.write(40);
-    coda.write(70);
-    strabico(true);
-    delay(2000);
-    spegnitutto();
-    coda.write(40);
-    coda.write(10);
-    strabico(false);
-    spegnitutto();
-  }
-  digitalWrite(23, HIGH);
-  delay(50);
-  digitalWrite(23, LOW);
-}
+String msgConferma = " ";
+String immagine = " ";
 
 void loop() {
-  // //lista comandi 
-  // digitalWrite(33, LOW);
-  //   bool checkInvio = false;
-  //   String ist = "";
-  //   while (checkInvio == false && ist == ""){
-  //       ricezioneEV3(ist, checkInvio);
-  //   }
-  //   //Serial.println("Pulsante premuto");
-  //   digitalWrite(33, HIGH);
-  //   spegnitutto();
-  //   delay(6000);
-  //   scenaGatto(4);
-  //   delay(18000);
-  //   invioSicuro(3,1,"avvioGonna");
-  //   invioSicuro(2,1,"incazzati");    
-  //   delay(7000);
-  //   invioSicuro(3,1,"arrestoGonna");
-  //   invioSicuro(2,1,"calmati");
-  //   delay(3000);
-  //   scenaGatto(1);
-  //   digitalWrite(BUILTIN_LED, LOW);
+  if (Serial.available())
+  {
+    do
+    {
+      bool check;
+      immagine = ricezioneRaspi(check);
+      invioRaspi(4, 0, immagine);
+      msgConferma = ricezioneRaspi(check);
+    } while (msgConferma == "ERR");
 
-  // delay(2000);
-  //Serial.println("-------------------------------");
+    if (immagine == "-cover-")
+    {
+      //
+    } else if (immagine == "-rabbit-")
+    {
+      invioSicuro(3, 2, "scenaConiglio");
+    } else if (immagine == "-cat-")
+    {
+      invioSicuro(2, 2, "scenaGatto1");
+    } else if (immagine == "-caterpillar-")
+    {
+      invioSicuro(3, 3, "scenaBruco");
+    } else if (immagine == "-queen-")
+    {
+      invioSicuro(3, 1, "avvioGonna");
+      invioSicuro(2, 1, "incazzati");
+    } else if (immagine == "-hatman-")
+    {
+      invioSicuro(3, 1, "arrestoGonna");
+      invioSicuro(2, 1, "calmati");
+      invioSicuro(2, 2, "scenagatto2");
+    } else if (immagine == "-alice-")
+    {
+      invioSicuro(3, 2, "scenaConiglioFinale");
+      invioSicuro(3, 1, "avvioGonnaFinale");
+      invioSicuro(2, 1, "incazzatiFinale");
+      invioSicuro(2, 2, "scenagattoFinale");
 
-  invioSicuro(2,2,"Ciao");
-  delay(5000);
+    }
+  }
 }
 
