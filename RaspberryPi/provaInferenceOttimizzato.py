@@ -2,36 +2,21 @@
 # -*- coding: utf-8 -*-
 
 """
-Optimized Wonderland Character Classifier - Webcam Inference
+Wonderland Character Classifier - Webcam Inference with Frame Skipping
 This script loads a trained EfficientNet model and performs real-time
-inference using a webcam feed with various optimizations.
+inference using a webcam feed with frame skipping optimization.
 """
 
 import cv2
 import torch
 import torchvision
 import numpy as np
-import threading
-import queue
-import time
 from PIL import Image
+import time
 
 # Set device for inference
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
-
-# Enable mixed precision if using CUDA
-use_amp = device == "cuda"
-if use_amp:
-    print("Enabling automatic mixed precision")
-
-# Configuration
-MODEL_PATH = "WonderlandEfficentNet.pth"
-LABELS_FILE = "labels.txt"
-FRAME_SKIP = 1  # Process every nth frame
-INFERENCE_SIZE = (224, 224)  # Standard size for EfficientNet
-DISPLAY_FPS = True
-MAX_QUEUE_SIZE = 3
 
 # Load labels
 def load_labels(labels_file):
@@ -39,7 +24,7 @@ def load_labels(labels_file):
         labels = [line.strip() for line in f.readlines()]
     return labels
 
-# Load and optimize the model
+# Load the model
 def load_model(model_path, num_classes):
     # Create the EfficientNet model with the default weights
     weights = torchvision.models.EfficientNet_B0_Weights.DEFAULT
@@ -56,224 +41,206 @@ def load_model(model_path, num_classes):
     model = model.to(device)
     model.eval()
     
-    # Optimize with TorchScript (JIT compilation)
-    try:
-        example_input = torch.rand(1, 3, 224, 224).to(device)
-        model = torch.jit.trace(model, example_input)
-        print("Model optimized with TorchScript")
-    except Exception as e:
-        print(f"JIT compilation failed: {e}")
-    
-    # Attempt model quantization for CPU
-    if device == "cpu":
-        try:
-            model_quantized = torch.quantization.quantize_dynamic(
-                model, {torch.nn.Linear}, dtype=torch.qint8
-            )
-            model = model_quantized
-            print("Model quantized for CPU inference")
-        except Exception as e:
-            print(f"Quantization failed: {e}")
-    
     return model, weights
 
-# Efficient preprocessing
-def preprocess_image(image, transform):
-    """Efficiently preprocess an image for inference"""
-    # Resize image directly with OpenCV (more efficient than PIL)
-    resized = cv2.resize(image, INFERENCE_SIZE)
-    # Convert BGR to RGB
-    rgb_image = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    # Convert to tensor and normalize in one step
-    img_tensor = transform(Image.fromarray(rgb_image)).unsqueeze(0)
-    return img_tensor
-
-# Prediction function with mixed precision support
-def predict_image(model, img_tensor, class_names):
-    img_tensor = img_tensor.to(device)
+# Function to make predictions on an image
+def predict_image(model, image, transform, device, class_names):
+    # Convert OpenCV BGR to RGB
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    pil_image = Image.fromarray(image_rgb)
     
-    # Use mixed precision for CUDA
-    if use_amp:
-        with torch.cuda.amp.autocast():
-            with torch.no_grad():
-                outputs = model(img_tensor)
-    else:
-        with torch.no_grad():
-            outputs = model(img_tensor)
+    # Apply transformations
+    img_tensor = transform(pil_image).unsqueeze(0).to(device)
     
-    # Get prediction
-    probabilities = torch.softmax(outputs, dim=1)
-    predicted_class = torch.argmax(probabilities, dim=1).item()
-    confidence = probabilities[0][predicted_class].item()
+    # Make prediction
+    with torch.inference_mode():
+        outputs = model(img_tensor)
+        probabilities = torch.softmax(outputs, dim=1)
+        predicted_class = torch.argmax(probabilities, dim=1).item()
+        confidence = probabilities[0][predicted_class].item()
     
     return class_names[predicted_class], confidence
 
-# Frame capture worker
-def capture_frames(cap, frame_queue, stop_event):
-    frame_count = 0
-    while not stop_event.is_set():
-        ret, frame = cap.read()
-        if not ret:
-            print("Error: Failed to capture image")
-            stop_event.set()
-            break
-            
-        # Skip frames if needed
-        frame_count += 1
-        if frame_count % FRAME_SKIP != 0:
-            continue
-            
-        # If queue is full, remove oldest item
-        if frame_queue.qsize() >= MAX_QUEUE_SIZE:
-            try:
-                frame_queue.get_nowait()
-            except queue.Empty:
-                pass
-                
-        frame_queue.put((frame, time.time()))
-        
-        # Small sleep to prevent CPU hogging
-        time.sleep(0.001)
-
-# Inference worker
-def process_frames(model, transform, class_names, frame_queue, result_queue, stop_event):
-    while not stop_event.is_set():
-        try:
-            frame, timestamp = frame_queue.get(timeout=1.0)
-            
-            # Preprocess
-            img_tensor = preprocess_image(frame, transform)
-            
-            # Predict
-            predicted_class, confidence = predict_image(model, img_tensor, class_names)
-            
-            # Add result to queue
-            result_queue.put((frame, predicted_class, confidence, timestamp))
-            
-        except queue.Empty:
-            continue
-        except Exception as e:
-            print(f"Error in inference: {e}")
-            continue
-
 def main():
+    # Configuration
+    model_path = "nuovi/WonderlandEfficentNet.pth"
+    labels_file = "nuovi/labels.txt"
+    
+    # Frame skipping configuration
+    FRAME_SKIP = 3  # Process every 3rd frame (skip 2 frames)
+    CONFIDENCE_THRESHOLD = 0.5  # Only show predictions above this confidence
+    PREDICTION_SMOOTHING = 5  # Number of frames to smooth predictions over
+    
     # Load class names
-    class_names = load_labels(LABELS_FILE)
+    class_names = load_labels(labels_file)
     print(f"Loaded {len(class_names)} classes: {class_names}")
     
     # Load model and get weights
-    model, weights = load_model(MODEL_PATH, len(class_names))
+    model, weights = load_model(model_path, len(class_names))
     
     # Get transforms from the weights
     transform = weights.transforms()
+    print("Using transforms from model weights")
     
     # Initialize webcam
     print("Initializing webcam...")
-    cap = cv2.VideoCapture(0)
-    
-    # Try to set higher resolution if available
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap = cv2.VideoCapture(0)  # 0 is usually the default webcam
     
     if not cap.isOpened():
         print("Error: Could not open webcam.")
         return
     
-    print("Webcam initialized. Press 'q' to quit.")
+    print(f"Webcam initialized. Frame skipping: {FRAME_SKIP}. Press 'q' to quit.")
     
-    # Create queues for frame passing
-    frame_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
-    result_queue = queue.Queue()
+    # Variables for frame processing
+    frame_count = 0
+    current_prediction = "Initializing..."
+    current_confidence = 0.0
+    last_prediction_time = time.time()
     
-    # Create stop event for signaling threads to exit
-    stop_event = threading.Event()
-    
-    # Start worker threads
-    capture_thread = threading.Thread(target=capture_frames, 
-                                     args=(cap, frame_queue, stop_event))
-    inference_thread = threading.Thread(target=process_frames,
-                                       args=(model, transform, class_names, 
-                                             frame_queue, result_queue, stop_event))
-    
-    capture_thread.daemon = True
-    inference_thread.daemon = True
-    
-    capture_thread.start()
-    inference_thread.start()
+    # Variables for prediction smoothing
+    recent_predictions = []
     
     # Variables for FPS calculation
-    frame_times = []
-    fps_update_interval = 0.5  # seconds
-    last_fps_update = time.time()
-    current_fps = 0
+    prev_frame_time = 0
+    inference_times = []
     
-    # Display loop
-    last_result = None
-    try:
-        while True:
-            # Get the latest result if available
+    while True:
+        # Read frame from webcam
+        ret, frame = cap.read()
+        
+        if not ret:
+            print("Error: Failed to capture image")
+            break
+        
+        # Calculate display FPS (actual frame rate)
+        curr_frame_time = time.time()
+        display_fps = 1.0 / (curr_frame_time - prev_frame_time) if prev_frame_time > 0 else 0
+        prev_frame_time = curr_frame_time
+        
+        # Frame skipping logic - only process inference on certain frames
+        should_process = (frame_count % FRAME_SKIP == 0)
+        
+        if should_process:
+            # Record inference start time
+            inference_start = time.time()
+            
+            # Make prediction
             try:
-                frame, predicted_class, confidence, timestamp = result_queue.get_nowait()
-                last_result = (frame, predicted_class, confidence, timestamp)
+                predicted_class, confidence = predict_image(model, frame, transform, device, class_names)
                 
-                # Update FPS
-                current_time = time.time()
-                frame_times.append(current_time)
+                # Record inference time
+                inference_time = time.time() - inference_start
+                inference_times.append(inference_time)
                 
-                # Remove old frame times
-                while frame_times and frame_times[0] < current_time - 1.0:
-                    frame_times.pop(0)
+                # Keep only last 30 inference times for averaging
+                if len(inference_times) > 30:
+                    inference_times.pop(0)
                 
-                # Update FPS counter periodically
-                if current_time - last_fps_update > fps_update_interval:
-                    current_fps = len(frame_times)
-                    last_fps_update = current_time
+                # Update prediction if confidence is above threshold
+                if confidence >= CONFIDENCE_THRESHOLD:
+                    # Add to recent predictions for smoothing
+                    recent_predictions.append((predicted_class, confidence))
+                    
+                    # Keep only recent predictions for smoothing
+                    if len(recent_predictions) > PREDICTION_SMOOTHING:
+                        recent_predictions.pop(0)
+                    
+                    # Find most common prediction in recent history
+                    if recent_predictions:
+                        # Get the most frequent prediction
+                        pred_counts = {}
+                        for pred, conf in recent_predictions:
+                            if pred not in pred_counts:
+                                pred_counts[pred] = []
+                            pred_counts[pred].append(conf)
+                        
+                        # Find prediction with highest average confidence
+                        best_pred = max(pred_counts.keys(), 
+                                      key=lambda x: sum(pred_counts[x]) / len(pred_counts[x]))
+                        best_conf = sum(pred_counts[best_pred]) / len(pred_counts[best_pred])
+                        
+                        current_prediction = best_pred
+                        current_confidence = best_conf
+                        last_prediction_time = time.time()
                 
-            except queue.Empty:
-                # If no new result, use the last one
-                if last_result is None:
-                    # If there's no result yet, wait a bit
-                    time.sleep(0.01)
-                    continue
-                frame, predicted_class, confidence, timestamp = last_result
-            
-            # Create a copy of the frame for drawing
-            display_frame = frame.copy()
-            
-            # Draw prediction on frame
-            prediction_text = f"{predicted_class.replace('-', '')}: {confidence:.2f}"
-            cv2.putText(display_frame, prediction_text, (10, 30), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-            
-            # Draw FPS in top right
-            if DISPLAY_FPS:
-                fps_text = f"FPS: {current_fps}"
-                fps_text_size = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                fps_x_position = display_frame.shape[1] - fps_text_size[0] - 10
-                cv2.putText(display_frame, fps_text, (fps_x_position, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            
-            # Display the frame
-            cv2.imshow('Wonderland Character Classifier', display_frame)
-            
-            # Break the loop if 'q' is pressed
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-                
-    except KeyboardInterrupt:
-        print("Interrupted by user")
-    finally:
-        # Clean up
-        print("Cleaning up resources...")
-        stop_event.set()
+            except Exception as e:
+                print(f"Inference error: {e}")
         
-        # Wait for threads to finish
-        capture_thread.join(timeout=1.0)
-        inference_thread.join(timeout=1.0)
+        # Age out old predictions (show "No detection" if prediction is too old)
+        time_since_prediction = time.time() - last_prediction_time
+        if time_since_prediction > 2.0:  # 2 seconds timeout
+            current_prediction = "No recent detection"
+            current_confidence = 0.0
         
-        cap.release()
-        cv2.destroyAllWindows()
-        print("Application terminated.")
+        # Draw prediction on frame
+        prediction_text = f"{current_prediction.replace('-', '')}: {current_confidence:.2f}"
+        
+        # Color code based on confidence
+        if current_confidence > 0.8:
+            color = (0, 255, 0)  # Green for high confidence
+        elif current_confidence > 0.5:
+            color = (0, 255, 255)  # Yellow for medium confidence
+        else:
+            color = (0, 0, 255)  # Red for low confidence
+        
+        cv2.putText(frame, prediction_text, (10, 30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+        
+        # Draw performance metrics
+        avg_inference_time = sum(inference_times) / len(inference_times) if inference_times else 0
+        inference_fps = 1.0 / avg_inference_time if avg_inference_time > 0 else 0
+        
+        metrics_text = [
+            f"Display FPS: {display_fps:.1f}",
+            f"Inference FPS: {inference_fps:.1f}",
+            f"Frame Skip: 1/{FRAME_SKIP}",
+            f"Processing: {'YES' if should_process else 'NO'}"
+        ]
+        
+        # Draw metrics in top right
+        y_offset = 30
+        for i, metric in enumerate(metrics_text):
+            text_size = cv2.getTextSize(metric, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+            x_position = frame.shape[1] - text_size[0] - 10
+            cv2.putText(frame, metric, (x_position, y_offset + i * 25),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        # Draw frame counter (for debugging)
+        cv2.putText(frame, f"Frame: {frame_count}", (10, frame.shape[0] - 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 1)
+        
+        # Display the frame
+        cv2.imshow('Wonderland Character Classifier', frame)
+        
+        # Increment frame counter
+        frame_count += 1
+        
+        # Handle key presses
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
+        elif key == ord('s'):
+            # Toggle frame skip rate with 's' key
+            FRAME_SKIP = 1 if FRAME_SKIP > 1 else 3
+            print(f"Frame skip changed to: 1/{FRAME_SKIP}")
+        elif key == ord('t'):
+            # Toggle confidence threshold with 't' key
+            CONFIDENCE_THRESHOLD = 0.3 if CONFIDENCE_THRESHOLD > 0.3 else 0.7
+            print(f"Confidence threshold changed to: {CONFIDENCE_THRESHOLD}")
+    
+    # Release resources
+    cap.release()
+    cv2.destroyAllWindows()
+    
+    # Print final statistics
+    if inference_times:
+        avg_inference_time = sum(inference_times) / len(inference_times)
+        print(f"\nFinal Statistics:")
+        print(f"Average inference time: {avg_inference_time:.3f}s")
+        print(f"Average inference FPS: {1.0/avg_inference_time:.1f}")
+        print(f"Total frames processed: {frame_count}")
+        print(f"Inference frames: {frame_count // FRAME_SKIP}")
 
 if __name__ == "__main__":
     main()

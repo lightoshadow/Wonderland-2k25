@@ -1,6 +1,7 @@
 -alice-
 -cat-
 -caterpillar-
+-cover-
 -hatman-
 -none-
 -queen-
