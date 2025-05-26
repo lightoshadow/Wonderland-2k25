@@ -442,14 +442,14 @@ void loop() {
     {
       invioSicuro(3, 1, "arrestoGonna");
       invioSicuro(2, 1, "calmati");
-      invioSicuro(2, 2, "scenagatto2");
+      invioSicuro(2, 2, "scenaGatto2");
     } else if (immagine == "-alice-")
     {
       invioSicuro(3, 2, "scenaConiglioFinale");
       invioSicuro(3, 1, "avvioGonnaFinale");
       invioSicuro(2, 1, "incazzatiFinale");
-      invioSicuro(2, 2, "scenagattoFinale");
-
+      invioSicuro(2, 2, "scenaGattoFinale");
+      invioSicuro(3, 3, "scenaBruco");
     }
   }
 }

@@ -85,6 +85,19 @@ void Incazzata() {
   braccioDX.write(180);
 }
 
+void IncazzataFinale(int n) {
+  for (int i = 0; i < n; i++)
+  {
+    setColor(255, 0, 0);
+    braccioSX.write(180);
+    delay(1000);
+    braccioSX.write(20);
+    braccioDX.write(20);
+    delay(1000);
+    braccioDX.write(180);
+  } 
+}
+
 void loop() {
   if (SerialBT.connected()) {
     Serial.println("Connesso.");
@@ -143,19 +156,16 @@ void loop() {
     }
 
     if (msg_recvd.istruzione == "incazzati") {
-      if (Serial) Serial.println("Comando ricevuto: avvio");
-      status = true; 
+      calma();
     }
-    if (msg_recvd.istruzione == "calmati") {
-      if (Serial) Serial.println("Comando ricevuto: pausa");
-      status = false; 
+    else if (msg_recvd.istruzione == "calmati") {
+      Incazzata();
     }
-  }
-
-  if (!status) {
-    calma();
-  } else {
-    Incazzata();
+    else if (msg_recvd.istruzione == "incazzatiFinale")
+    {
+      IncazzataFinale(4);
+    }
+    
   }
 
   delay(50);

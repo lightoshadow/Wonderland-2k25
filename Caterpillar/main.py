@@ -9,10 +9,6 @@ from pybricks.media.ev3dev import SoundFile, ImageFile
 
 import threading
 
-# SERVER = 'EV3Master'
-
-# client = BluetoothMailboxClient()
-
 ev3 = EV3Brick()
 
 testa = Motor(Port.A)
@@ -21,7 +17,15 @@ fiore1 = Motor(Port.C)
 fiore2 = Motor(Port.D)
 dec = ""
 
-# com3 = TextMailbox('com1', client)
+# Connessione Bluetooth
+client = BluetoothMailboxClient()
+com3 = TextMailbox('com3', client)
+SERVER = 'EV3Master'
+
+# Connessione al server
+ev3.screen.print('Connessione in corso...')
+client.connect(SERVER)
+ev3.screen.print('Connesso!')
 
 class msg_protocol:
     def __init__(self):
@@ -29,21 +33,6 @@ class msg_protocol:
         self.ID = 0 #Se device_type è 0, questo è l'id dell'ESP32, se è 1, da 0 a 3 controlla i motori da A a D
         self.istruzione = "" #Messaggio da inviare a dispositivo. Valido solo se device_type = 0 o 1
         self.checkInvio = False
-
-def conversioneDaJson(message):
-    return json.loads(message)
-
-def conversioneAJson(message):
-    return json.dumps(message.__dict__)
-
-def risposta(ID, tipo, istruzione):
-    msg = msg_protocol()
-    msg.ID = ID
-    msg.tipo = tipo
-    msg.istruzione = istruzione
-    msg.checkInvio = False
-
-    return conversioneAJson(msg)
 
 def movimentoTesta():
     for a in range(1,15):
@@ -96,7 +85,7 @@ while True:
 
     ist = lett
 
-    if ist == "avvioBruco":
+    if ist == "scenaBruco":
         ev3.screen.print('avvioBruco')
         print(ist)
         avvioProgramma()

@@ -65,11 +65,14 @@ while True:
         gonna.run(200)
         print(ist)
 
-    if ist == "arrestoGonna":
+    elif ist == "arrestoGonna":
         ev3.screen.print('arrestoGonna')
         statusGonna = False
         gonna.stop()
         print(ist)
 
-
-    #com1.send(risposta())
+    elif ist == "avvioGonnaFinale":
+        ev3.screen.print('avvioGonna')
+        statusGonna = True
+        gonna.run_time(250,30000)
+        print(ist)

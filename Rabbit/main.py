@@ -39,51 +39,50 @@ braccia.run_target(100,0)
 print(testa.angle())
 print(braccia.angle())
 
-istruzione = "InviaTUTTO"
+def scenaConiglio():
+    for i in range(4):
+        letturaC = sensCentrale.distance()
+        print("Centro:", letturaC)
+
+        braccia.run_angle(200,60)
+        braccia.run_angle(200,-60)
+
+        if 20 < letturaC < 1000:
+            robot.straight(-200)  # Avanza
+        else:
+            letturaS = sensSX.distance()
+            print("Sinistra:", letturaS)
+            if 20 < letturaS < 1000:
+                testa.run_angle(100,-30)
+                testa.run_angle(100,30)
+                robot.turn(30)
+
+            letturaD = sensDX.distance()
+            print("Destra:", letturaD)
+            if 20 < letturaD < 1000:
+                testa.run_angle(100,30)
+                testa.run_angle(100,-30)
+                robot.turn(-30)
+
+        # Se trova il colore blu o verde, si ferma e rompe il ciclo
+        # colore = sensCol.color()
+        # if colore == Color.BLUE or colore == Color.GREEN:
+        #     robot.stop()
+        #     ev3.screen.print('Colore trovato!')
+        #     com2.send(istruzione)  # Invia il comand
+
+        wait(100)
+
 while True:
-    letturaC = sensCentrale.distance()
-    print("Centro:", letturaC)
+    com2.wait()
+    istruzione = com2.read()
+    print(istruzione)
+    ev3.screen.print(istruzione)
 
-    braccia.run_angle(200,60)
-    braccia.run_angle(200,-60)
+    if istruzione == "scenaConiglio":
+        scenaConiglio()
 
-    if 20 < letturaC < 1000:
-        robot.straight(-200)  # Avanza
-    else:
-        letturaS = sensSX.distance()
-        print("Sinistra:", letturaS)
-        if 20 < letturaS < 1000:
-            testa.run_angle(100,-30)
-            testa.run_angle(100,30)
-            robot.turn(30)
+    # Se il comando è "giraConiglio", ruota su sé stesso
+    if istruzione == "scenaConiglioFinale":
+        robot.turn(1440)
 
-        letturaD = sensDX.distance()
-        print("Destra:", letturaD)
-        if 20 < letturaD < 1000:
-            testa.run_angle(100,30)
-            testa.run_angle(100,-30)
-            robot.turn(-30)
-
-    # Se trova il colore blu o verde, si ferma e rompe il ciclo
-    colore = sensCol.color()
-    if colore == Color.BLUE or colore == Color.GREEN:
-        robot.stop()
-        ev3.screen.print('Colore trovato!')
-        com2.send(istruzione)  # Invia il comando
-        break
-
-    wait(100)
-
-# Se il comando è "avviaTUTTO", avvia il comportamento
-
-    
-
-# Una volta uscito dal ciclo, attende un nuovo comando
-com2.wait()
-istruzione = com2.read()
-print("Secondo comando:", istruzione)
-ev3.screen.print(istruzione)
-
-# Se il comando è "giraConiglio", ruota su sé stesso
-if istruzione == "giraConiglio":
-    robot.turn(360)
