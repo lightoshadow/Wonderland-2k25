@@ -239,15 +239,14 @@ void setup() {
   pinMode(BUILTIN_LED, OUTPUT);
   digitalWrite(BUILTIN_LED, LOW);
 
-  // SerialBT.begin("ESPMaster", true);     OMESSO BLUETOOTH PER DEBUG
-  // //Serial.println("ESPMaster ON");
+  SerialBT.begin("ESPMaster", true);    
+  //Serial.println("ESPMaster ON");
 
-  // while (!SerialBT.connect(slave1)){
-  //   //Serial.println("Tentativo di connessione a 2.1...");
-  //   delay(1000);
-  // }
-  // digitalWrite(BUILTIN_LED, HIGH);
-  //Serial.println("Connesso");
+  while (!SerialBT.connect(slave1)){
+    //Serial.println("Tentativo di connessione a 2.1...");
+    delay(1000);
+  }
+  digitalWrite(BUILTIN_LED, HIGH);
 }
 
 String assegnaNome(int id) {

@@ -41,11 +41,11 @@ void setup() {
   pinMode(33, OUTPUT);
   pinMode(23, OUTPUT);
   pinMode(BUILTIN_LED, OUTPUT);
-  digitalWrite(BUILTIN_LED, LOW);
+  digitalWrite(BUILTIN_LED, HIGH);
 
   SerialBT.begin("ESP32_Slave_2.2");
   if (Serial) Serial.println("ESP32 Slave 2.2 Bluetooth ON, in attesa di connessione...");
-  digitalWrite(BUILTIN_LED, HIGH);
+  digitalWrite(BUILTIN_LED, LOW);
   spegnitutto();
 }
 
