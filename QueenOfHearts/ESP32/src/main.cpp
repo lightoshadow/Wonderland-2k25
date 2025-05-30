@@ -30,17 +30,15 @@ struct msg_protocol {
 };
 
 void setup() {
-  Serial.begin(115200);
-
-  // Timeout per la seriale: attende fino a 3 secondi ma non blocca l'esecuzione
-  unsigned long start = millis();
-  while (!Serial && millis() - start < 3000) {}
-
+  Serial.begin(115200); 
   pinMode(BUILTIN_LED, OUTPUT);
   digitalWrite(BUILTIN_LED, LOW);
 
   braccioSX.attach(PINbraccioSX);
   braccioDX.attach(PINbraccioDX);
+
+  braccioSX.write(20);
+  braccioDX.write(180);
 
   pinMode(Rosso1, OUTPUT);
   pinMode(Verde1, OUTPUT);
@@ -85,8 +83,8 @@ void Incazzata() {
   braccioDX.write(180);
 }
 
-void IncazzataFinale(int n) {
-  for (int i = 0; i < n; i++)
+void IncazzataFinale(int times){
+  for (int i = 0; i < times; i++)
   {
     setColor(255, 0, 0);
     braccioSX.write(180);
@@ -156,14 +154,14 @@ void loop() {
     }
 
     if (msg_recvd.istruzione == "incazzati") {
-      calma();
+      IncazzataFinale(10);
     }
     else if (msg_recvd.istruzione == "calmati") {
-      Incazzata();
+      calma();
     }
     else if (msg_recvd.istruzione == "incazzatiFinale")
     {
-      IncazzataFinale(4);
+      IncazzataFinale(10);
     }
     
   }
