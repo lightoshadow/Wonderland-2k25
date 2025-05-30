@@ -75,7 +75,7 @@ void invioUARTesp(int tipo, int ID, String istruzione) {
       msg_json["tipo"] = tipo;
       msg_json["ID"] = ID;
       msg_json["istruzione"] = istruzione;
-      msg_json["checkInvio"] = false;
+      msg_json["checkInvio"] = true;
 
       memset(Json, 0, sizeof(Json));
 
