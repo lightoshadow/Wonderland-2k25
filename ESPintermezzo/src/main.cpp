@@ -4,8 +4,8 @@
 #include <ArduinoJson.h>
 #include <Arduino.h>
 
-#define RXD1 21
-#define TXD1 19
+#define RXD1 19
+#define TXD1 21
 
 #define ESP_BAUD 115200
 #define GPS_BAUD 115200
