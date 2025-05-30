@@ -4,17 +4,17 @@
 #include <Arduino.h>
 
 // Define RX and TX pins for Serial 2
-#define RXD2 16
-#define TXD2 17
+#define RXEV3 16
+#define TXEV3 17
 
-#define RXD1 21
-#define TXD1 19
+#define RXESP 21
+#define TXESP 19
 
 #define ESP_BAUD 115200
-#define GPS_BAUD 115200
+#define EV3_BAUD 115200
 
 // Create an instance of the HardwareSerial class for Serial 2
-HardwareSerial gpsSerial(2);
+HardwareSerial ev3Serial(2);
 HardwareSerial ESPSerial(1);
 
 BluetoothSerial SerialBT;
@@ -34,11 +34,11 @@ char Json[255];
 String ricezioneEV3(String& default_istruzione, bool& default_checkInvio) {
   int index = 0;
   
-  while (gpsSerial.available() > 0) {
-    char gpsData = gpsSerial.read();
+  while (ev3Serial.available() > 0) {
+    char ev3Data = ev3Serial.read();
     if (index < sizeof(Json) - 1) { // Ensure no buffer overflow
-      Json[index++] = gpsData;
-      //Serial.print(gpsData);
+      Json[index++] = ev3Data;
+      //Serial.print(ev3Data);
     }
   }
   
@@ -82,7 +82,7 @@ String ricezioneRaspi(bool& checkInvio) {
     char Data = Serial.read();
     if (index < sizeof(Json) - 1) { // Ensure no buffer overflow
       Json[index++] = Data;
-      //Serial.print(gpsData);
+      //Serial.print(ev3Data);
     }
   }
   
@@ -126,7 +126,7 @@ String ricezioneUARTesp(bool& checkInvio) {
     char Data = ESPSerial.read();
     if (index < sizeof(Json) - 1) { // Ensure no buffer overflow
       Json[index++] = Data;
-      //Serial.print(gpsData);
+      //Serial.print(ev3Data);
     }
   }
   
@@ -182,16 +182,16 @@ void invioEV3(int tipo_dispositivo, int ID_dispositivo, String istruzione) {
           len++;                // Incrementa la lunghezza del messaggio
       }
 
-  gpsSerial.write((const uint8_t*)Json, len);
+  ev3Serial.write((const uint8_t*)Json, len);
 }
 
-void invioRaspi(int tipo, int ID, String istruzione) {
+void invioRaspi(int tipo, int ID, String istruzione, bool checkInvio = false) {
   StaticJsonDocument<255> msg_json;
 
       msg_json["tipo"] = tipo;
       msg_json["ID"] = ID;
       msg_json["istruzione"] = istruzione;
-      msg_json["checkInvio"] = false;
+      msg_json["checkInvio"] = checkInvio;
 
       memset(Json, 0, sizeof(Json));
 
@@ -213,7 +213,7 @@ void invioUARTesp(int tipo, int ID, String istruzione) {
       msg_json["tipo"] = tipo;
       msg_json["ID"] = ID;
       msg_json["istruzione"] = istruzione;
-      msg_json["checkInvio"] = false;
+      msg_json["checkInvio"] = true;
 
       memset(Json, 0, sizeof(Json));
 
@@ -232,30 +232,30 @@ void invioUARTesp(int tipo, int ID, String istruzione) {
 
 void setup() {
   Serial.begin(115200);
-  gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RXD2, TXD2);
-  ESPSerial.begin(ESP_BAUD, SERIAL_8N1, RXD1, TXD2);
-  //Serial.println("Serial 2 started at 115200 baud rate");
+  ev3Serial.begin(EV3_BAUD, SERIAL_8N1, RXEV3, TXEV3);
+  ESPSerial.begin(ESP_BAUD, SERIAL_8N1, RXESP, TXESP);
+  Serial.println("Serial 2 started at 115200 baud rate");
 
   pinMode(BUILTIN_LED, OUTPUT);
   digitalWrite(BUILTIN_LED, LOW);
 
   SerialBT.begin("ESPMaster", true);    
+  Serial.println("SerialBT started with name ESPMaster");
   //Serial.println("ESPMaster ON");
 
   while (!SerialBT.connect(slave1)){
     //Serial.println("Tentativo di connessione a 2.1...");
-    delay(1000);
+    digitalWrite(BUILTIN_LED, HIGH);
+    delay(500);
+    digitalWrite(BUILTIN_LED, LOW);
+    delay(500);
   }
   digitalWrite(BUILTIN_LED, HIGH);
 }
 
-String assegnaNome(int id) {
-  return slave1;
-}
-
 void invioSicuroEsp(int id, String istruzione) {
   msg_protocol msg_recvd;
-  const String slaveName = assegnaNome(id);
+  const String slaveName = slave1;
   // Serial.print("Connessione a: ");
   // Serial.println(slaveName);
   
@@ -349,7 +349,7 @@ void invioSicuro(int tipo, int ID, String istruzione){
     {
       bool check;
       invioUARTesp(tipo, ID, istruzione);
-      if (ricezioneUARTesp(check) == istruzione);
+      if (ricezioneUARTesp(check) == istruzione)
       {
         if (check)
         {
@@ -365,7 +365,7 @@ void invioSicuro(int tipo, int ID, String istruzione){
   {
     bool check;
     invioRaspi(tipo, ID, istruzione);
-    if (ricezioneRaspi(check) == istruzione);
+    if (ricezioneRaspi(check) == istruzione)
     {
       if (check)
       {
@@ -417,7 +417,7 @@ void loop() {
     {
       bool check;
       immagine = ricezioneRaspi(check);
-      invioRaspi(4, 0, immagine);
+      invioRaspi(4, 0, immagine, true);
       msgConferma = ricezioneRaspi(check);
     } while (msgConferma == "ERR");
 
@@ -452,4 +452,3 @@ void loop() {
     }
   }
 }
-
