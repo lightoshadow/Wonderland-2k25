@@ -234,11 +234,7 @@ void setup() {
   Serial.begin(115200);
   ev3Serial.begin(EV3_BAUD, SERIAL_8N1, RXEV3, TXEV3);
   ESPSerial.begin(ESP_BAUD, SERIAL_8N1, RXESP, TXESP);
-<<<<<<< HEAD
   Serial.println("Serial 2 started at 115200 baud rate");
-=======
-  //Serial.println("Serial 2 started at 115200 baud rate");
->>>>>>> 34b45f5e5dd77483647184317ecd7ecd2e614ee3
 
   pinMode(BUILTIN_LED, OUTPUT);
   digitalWrite(BUILTIN_LED, LOW);
