@@ -1,13 +1,15 @@
 # All of the code used for Lewis
 
- 	/RaspberryPi 
-  code running on the Raspberry Pi behind Lewis's back 
+Lewis is the central orchestrator of the Wonderland performance. This directory contains the code for the various components that make up Lewis's control system.
 
- 	/ESPMaster
-  code running on the first ESP32 behind Lewis's back 
+-   **/RaspberryPi**
+    This folder houses the Python scripts running on the Raspberry Pi, which is responsible for visual processing and high-level decision making.
 
- 	/ESPintermezzo
-  code running on the second ESP32 behind Lewis's back 
+-   **/ESPMaster**
+    This folder contains the Arduino C++ code for the primary ESP32 microcontroller, acting as the main communication hub and command dispatcher for Lewis.
 
-	/EV3Master
-  code running on the EV3 brick behind Lewis's back 
+-   **/ESPintermezzo**
+    This folder contains the Arduino C++ code for a secondary ESP32 microcontroller that acts as a communication bridge or relay.
+
+-   **/EV3Master**
+    This folder contains the MicroPython code for the LEGO EV3 brick that serves as a master controller for other EV3-based robots in the performance.
